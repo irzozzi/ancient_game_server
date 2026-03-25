@@ -1,0 +1,36 @@
+﻿@AncientServer_HostAddress = http://localhost:5200
+
+### 🎮 ТЕСТОВЫЕ ЗАПРОСЫ ДЛЯ ИГРЫ "ДРЕВНИЕ"
+
+### 1. ПРОВЕРКА РАБОТЫ СЕРВЕРА
+GET {{AncientServer_HostAddress}}/api/game/ping
+Accept: text/plain
+
+### 2. ПОЛУЧИТЬ СПИСОК КОНТИНЕНТОВ
+GET {{AncientServer_HostAddress}}/api/game/continents
+Accept: application/json
+
+### 3. ПОЛУЧИТЬ СТАТУС СЕРВЕРА
+GET {{AncientServer_HostAddress}}/api/game/test
+Accept: application/json
+
+### 4. РЕГИСТРАЦИЯ НОВОГО ИГРОКА
+POST {{AncientServer_HostAddress}}/api/game/register
+Content-Type: application/json
+
+{
+  "username": "Воин_Севера"
+}
+
+### 5. ВЫБРАТЬ КОНТИНЕНТ ДЛЯ ПРИЗЕМЛЕНИЯ
+POST {{AncientServer_HostAddress}}/api/game/spawn
+Content-Type: application/json
+
+{
+  "playerId": "ВСТАВЬТЕ_ID_ЗДЕСЬ",
+  "continentId": 1
+}
+
+### 6. ПОЛУЧИТЬ СТАТИСТИКУ МИРА
+GET {{AncientServer_HostAddress}}/api/game/world-stats
+Accept: application/json
