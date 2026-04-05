@@ -17,5 +17,10 @@ namespace AncientServer.Models
         public int Level { get; set; } = 1;
         public int Experience { get; set; } = 0;
         public string GuildId { get; set; } = string.Empty;
+
+        // Поля для города и поместья (вместо старых CellX/CellZ)
+        public int CityId { get; set; } = -1;
+        public float SettlementLocalX { get; set; }
+        public float SettlementLocalZ { get; set; }
     }
 }
