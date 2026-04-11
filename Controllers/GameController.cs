@@ -12,22 +12,24 @@ namespace AncientServer.Controllers
     [Route("api/[controller]")]
     public class GameController : ControllerBase
     {
-        // ========== ХРАНИЛИЩА ==========
         private static readonly ConcurrentDictionary<string, Player> _players = new();
         private static readonly List<Continent> _continents = new()
         {
-            new Continent { Id = 1, Name = "Макошь", Element = "earth", Description = "Континент земли и стабильности", CenterX = 200, CenterZ = 200, MaxPlayers = 1000, CurrentPlayers = 0, IsAvailable = true, IsStarter = true, LevelRequirement = 1, BonusType = "defense", IsCentral = false },
-            new Continent { Id = 2, Name = "Стрибог", Element = "wind", Description = "Континент ветра и скорости", CenterX = -200, CenterZ = 200, MaxPlayers = 1000, CurrentPlayers = 0, IsAvailable = true, IsStarter = true, LevelRequirement = 1, BonusType = "speed", IsCentral = false },
-            new Continent { Id = 3, Name = "Семаргл", Element = "fire", Description = "Континент огня и силы", CenterX = -200, CenterZ = -200, MaxPlayers = 1000, CurrentPlayers = 0, IsAvailable = true, IsStarter = true, LevelRequirement = 1, BonusType = "attack", IsCentral = false },
-            new Continent { Id = 4, Name = "Давана", Element = "water", Description = "Континент воды и мудрости", CenterX = 200, CenterZ = -200, MaxPlayers = 1000, CurrentPlayers = 0, IsAvailable = true, IsStarter = true, LevelRequirement = 1, BonusType = "wisdom", IsCentral = false },
-            new Continent { Id = 5, Name = "Атлантида", Element = "void", Description = "Затерянный центральный континент", CenterX = 0, CenterZ = 0, MaxPlayers = 4000, CurrentPlayers = 0, IsAvailable = true, IsStarter = false, LevelRequirement = 15, BonusType = "all", IsCentral = true }
+            new Continent { Id = 1, Name = "Макошь", Element = "earth", Description = "Континент земли", CenterX = 200, CenterZ = 200, MaxPlayers = 1000, CurrentPlayers = 0, IsAvailable = true, IsStarter = true, LevelRequirement = 1, BonusType = "defense", IsCentral = false },
+            new Continent { Id = 2, Name = "Стрибог", Element = "wind", Description = "Континент ветра", CenterX = -200, CenterZ = 200, MaxPlayers = 1000, CurrentPlayers = 0, IsAvailable = true, IsStarter = true, LevelRequirement = 1, BonusType = "speed", IsCentral = false },
+            new Continent { Id = 3, Name = "Семаргл", Element = "fire", Description = "Континент огня", CenterX = -200, CenterZ = -200, MaxPlayers = 1000, CurrentPlayers = 0, IsAvailable = true, IsStarter = true, LevelRequirement = 1, BonusType = "attack", IsCentral = false },
+            new Continent { Id = 4, Name = "Давана", Element = "water", Description = "Континент воды", CenterX = 200, CenterZ = -200, MaxPlayers = 1000, CurrentPlayers = 0, IsAvailable = true, IsStarter = true, LevelRequirement = 1, BonusType = "wisdom", IsCentral = false },
+            new Continent { Id = 5, Name = "Атлантида", Element = "void", Description = "Центральный континент", CenterX = 0, CenterZ = 0, MaxPlayers = 4000, CurrentPlayers = 0, IsAvailable = true, IsStarter = false, LevelRequirement = 15, BonusType = "all", IsCentral = true }
         };
 
-        // Хранилище городов
         private static readonly Dictionary<int, City> _cities = new();
         private static int _nextCityId = 1;
+        private static readonly Random _rand = new Random();
 
-        // Статический конструктор – генерация городов для континентов 1-4
+        // Константы для проверки наложений
+        private const float CENTER_RADIUS = 0.15f;
+        private const float MIN_DISTANCE = 0.1f;
+
         static GameController()
         {
             GenerateCitiesForContinent(1);
@@ -36,7 +38,6 @@ namespace AncientServer.Controllers
             GenerateCitiesForContinent(4);
         }
 
-        // ========== ГЕНЕРАЦИЯ ГОРОДОВ ==========
         private static void GenerateCitiesForContinent(int continentId)
         {
             var rings = new[]
@@ -48,7 +49,6 @@ namespace AncientServer.Controllers
                 new { Count = 12, Radius = 20f, Level = 5 }
             };
 
-            var rand = new Random();
             foreach (var ring in rings)
             {
                 float angleStep = 2 * MathF.PI / ring.Count;
@@ -64,62 +64,84 @@ namespace AncientServer.Controllers
                         ContinentId = continentId,
                         Level = ring.Level,
                         CenterX = x,
-                        CenterZ = z
+                        CenterZ = z,
+                        Settlements = new List<PlayerSettlement>(), // пустой список – поместья будут добавляться при спавне
+                        Mines = new List<Mine>(),
+                        MobCamps = new List<MobCamp>(),
+                        Dungeons = new List<Dungeon>()
                     };
 
-                    // Генерация шахт (10)
+                    // 10 шахт (с проверкой наложения только между собой, так как поместий ещё нет)
                     for (int m = 0; m < 10; m++)
                     {
                         float localX, localZ;
+                        int attempts = 0;
                         do
                         {
-                            localX = (float)rand.NextDouble();
-                            localZ = (float)rand.NextDouble();
-                        } while (IsTooCloseToCenter(localX, localZ, 0.15f));
+                            localX = (float)_rand.NextDouble();
+                            localZ = (float)_rand.NextDouble();
+                            attempts++;
+                            if (attempts > 500) break;
+                        } while (IsTooCloseToCenter(localX, localZ, CENTER_RADIUS) ||
+                                 IsOverlappingWithMines(localX, localZ, city.Mines, MIN_DISTANCE));
+                        
                         city.Mines.Add(new Mine
                         {
-                            Type = rand.Next(2) == 0 ? "platinum" : "spirit",
+                            Type = _rand.Next(2) == 0 ? "platinum" : "spirit",
                             LocalX = localX,
                             LocalZ = localZ,
-                            Amount = rand.Next(800, 1200),
+                            Amount = _rand.Next(800, 1200),
                             MaxAmount = 1200
                         });
                     }
 
-                    // Генерация мобов (20)
+                    // 20 мобов (с проверкой наложения на шахты)
                     for (int m = 0; m < 20; m++)
                     {
                         float localX, localZ;
+                        int attempts = 0;
                         do
                         {
-                            localX = (float)rand.NextDouble();
-                            localZ = (float)rand.NextDouble();
-                        } while (IsTooCloseToCenter(localX, localZ, 0.1f));
+                            localX = (float)_rand.NextDouble();
+                            localZ = (float)_rand.NextDouble();
+                            attempts++;
+                            if (attempts > 500) break;
+                        } while (IsTooCloseToCenter(localX, localZ, CENTER_RADIUS) ||
+                                 IsOverlappingWithMines(localX, localZ, city.Mines, MIN_DISTANCE) ||
+                                 IsOverlappingWithMobs(localX, localZ, city.MobCamps, MIN_DISTANCE));
+                        
                         city.MobCamps.Add(new MobCamp
                         {
-                            MobType = rand.Next(3) switch { 0 => "goblin", 1 => "wolf", _ => "skeleton" },
-                            Level = rand.Next(1, city.Level + 2),
+                            MobType = _rand.Next(3) switch { 0 => "goblin", 1 => "wolf", _ => "skeleton" },
+                            Level = _rand.Next(1, city.Level + 2),
                             LocalX = localX,
                             LocalZ = localZ,
                             IsAlive = true
                         });
                     }
 
-                    // Генерация подземелий (3)
+                    // 3 подземелья (с проверкой наложения на шахты и мобов)
                     for (int m = 0; m < 3; m++)
                     {
                         float localX, localZ;
+                        int attempts = 0;
                         do
                         {
-                            localX = (float)rand.NextDouble();
-                            localZ = (float)rand.NextDouble();
-                        } while (IsTooCloseToCenter(localX, localZ, 0.2f));
+                            localX = (float)_rand.NextDouble();
+                            localZ = (float)_rand.NextDouble();
+                            attempts++;
+                            if (attempts > 500) break;
+                        } while (IsTooCloseToCenter(localX, localZ, CENTER_RADIUS) ||
+                                 IsOverlappingWithMines(localX, localZ, city.Mines, MIN_DISTANCE) ||
+                                 IsOverlappingWithMobs(localX, localZ, city.MobCamps, MIN_DISTANCE) ||
+                                 IsOverlappingWithDungeons(localX, localZ, city.Dungeons, MIN_DISTANCE));
+                        
                         city.Dungeons.Add(new Dungeon
                         {
-                            DungeonType = rand.Next(2) == 0 ? "ancient_temple" : "cursed_crypt",
+                            DungeonType = _rand.Next(2) == 0 ? "ancient_temple" : "cursed_crypt",
                             LocalX = localX,
                             LocalZ = localZ,
-                            LastCompletedTime = DateTime.UtcNow.AddHours(-rand.Next(0, 24))
+                            LastCompletedTime = DateTime.UtcNow.AddHours(-_rand.Next(0, 24))
                         });
                     }
 
@@ -128,6 +150,7 @@ namespace AncientServer.Controllers
             }
         }
 
+        // ========== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ ПРОВЕРКИ НАЛОЖЕНИЙ ==========
         private static bool IsTooCloseToCenter(float x, float z, float minDistance)
         {
             float dx = x - 0.5f;
@@ -135,71 +158,87 @@ namespace AncientServer.Controllers
             return Math.Sqrt(dx * dx + dz * dz) < minDistance;
         }
 
-        // ========== СИСТЕМНЫЕ МЕТОДЫ ==========
+        private static bool IsOverlappingWithMines(float x, float z, List<Mine> mines, float minDist)
+        {
+            foreach (var m in mines)
+                if (Math.Abs(m.LocalX - x) < minDist && Math.Abs(m.LocalZ - z) < minDist)
+                    return true;
+            return false;
+        }
+
+        private static bool IsOverlappingWithMobs(float x, float z, List<MobCamp> mobs, float minDist)
+        {
+            foreach (var m in mobs)
+                if (Math.Abs(m.LocalX - x) < minDist && Math.Abs(m.LocalZ - z) < minDist)
+                    return true;
+            return false;
+        }
+
+        private static bool IsOverlappingWithDungeons(float x, float z, List<Dungeon> dungeons, float minDist)
+        {
+            foreach (var d in dungeons)
+                if (Math.Abs(d.LocalX - x) < minDist && Math.Abs(d.LocalZ - z) < minDist)
+                    return true;
+            return false;
+        }
+
+        private static bool IsOverlappingWithSettlements(float x, float z, List<PlayerSettlement> settlements, float minDist)
+        {
+            foreach (var s in settlements)
+                if (Math.Abs(s.LocalX - x) < minDist && Math.Abs(s.LocalZ - z) < minDist)
+                    return true;
+            return false;
+        }
+
+        private static bool IsOverlappingWithAll(float x, float z, City city, float minDist)
+        {
+            return IsOverlappingWithMines(x, z, city.Mines, minDist) ||
+                   IsOverlappingWithMobs(x, z, city.MobCamps, minDist) ||
+                   IsOverlappingWithDungeons(x, z, city.Dungeons, minDist) ||
+                   IsOverlappingWithSettlements(x, z, city.Settlements, minDist);
+        }
+
+        // ========== API МЕТОДЫ ==========
         [HttpGet("ping")]
-        public IActionResult Ping() => Ok(new { message = "pong", serverTime = DateTime.UtcNow, version = "1.0.0" });
+        public IActionResult Ping() => Ok(new { message = "pong", serverTime = DateTime.UtcNow });
 
         [HttpGet("test")]
-        public IActionResult Test() => Ok(new
-        {
-            Message = "Сервер игры 'Древные' работает!",
-            Status = "online",
-            Time = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss"),
-            PlayersCount = _players.Count
-        });
+        public IActionResult Test() => Ok(new { Message = "Сервер работает", Status = "online", Time = DateTime.UtcNow, PlayersCount = _players.Count });
 
-        // ========== КОНТИНЕНТЫ ==========
         [HttpGet("continents")]
         public IActionResult GetContinents([FromQuery] string? playerId = null)
         {
             Player? player = null;
-            if (!string.IsNullOrEmpty(playerId))
-                _players.TryGetValue(playerId, out player);
-
-            var continentsInfo = _continents.Select(c =>
+            if (!string.IsNullOrEmpty(playerId)) _players.TryGetValue(playerId, out player);
+            var result = _continents.Select(c => new
             {
-                var canSpawn = c.IsStarter || (player != null && player.Level >= c.LevelRequirement);
-                return new
-                {
-                    c.Id,
-                    c.Name,
-                    c.Element,
-                    c.Description,
-                    Players = $"{c.CurrentPlayers}/{c.MaxPlayers}",
-                    c.LevelRequirement,
-                    CanSpawn = canSpawn,
-                    IsLocked = !canSpawn
-                };
+                c.Id,
+                c.Name,
+                c.Element,
+                c.Description,
+                Players = $"{c.CurrentPlayers}/{c.MaxPlayers}",
+                c.LevelRequirement,
+                CanSpawn = c.IsStarter || (player != null && player.Level >= c.LevelRequirement),
+                IsLocked = !(c.IsStarter || (player != null && player.Level >= c.LevelRequirement))
             });
-            return Ok(continentsInfo);
+            return Ok(result);
         }
 
-        // ========== ИГРОКИ ==========
         [HttpGet("players")]
         public IActionResult GetPlayers()
         {
-            var playersList = _players.Values.Select(p =>
+            var list = _players.Values.Select(p =>
             {
                 var continent = p.ContinentId.HasValue ? _continents.FirstOrDefault(c => c.Id == p.ContinentId) : null;
-                return new
-                {
-                    p.Id,
-                    p.Username,
-                    p.Level,
-                    Continent = continent?.Name ?? "Не выбран",
-                    SpawnPosition = p.ContinentId.HasValue ? new { p.SpawnX, p.SpawnZ } : null,
-                    p.CreatedAt
-                };
+                return new { p.Id, p.Username, p.Level, Continent = continent?.Name ?? "Не выбран", SpawnPosition = p.ContinentId.HasValue ? new { p.SpawnX, p.SpawnZ } : null, p.CreatedAt };
             });
-            return Ok(playersList);
+            return Ok(list);
         }
 
         [HttpGet("player/{id}")]
         public IActionResult GetPlayer(string id)
         {
-            if (!_players.TryGetValue(id, out var player))
-                return NotFound(new { error = "Игрок не найден" });
-
+            if (!_players.TryGetValue(id, out var player)) return NotFound(new { error = "Игрок не найден" });
             var continent = player.ContinentId.HasValue ? _continents.FirstOrDefault(c => c.Id == player.ContinentId) : null;
             return Ok(new
             {
@@ -220,11 +259,8 @@ namespace AncientServer.Controllers
         [HttpPost("register")]
         public IActionResult RegisterPlayer([FromBody] RegisterRequest? request)
         {
-            if (request == null || string.IsNullOrWhiteSpace(request.Username))
-                return BadRequest(new { error = "Имя игрока обязательно" });
-            if (request.Username.Length < 3 || request.Username.Length > 20)
+            if (request == null || string.IsNullOrWhiteSpace(request.Username) || request.Username.Length < 3 || request.Username.Length > 20)
                 return BadRequest(new { error = "Имя должно быть 3-20 символов" });
-
             if (_players.Values.Any(p => p.Username.Equals(request.Username, StringComparison.OrdinalIgnoreCase)))
                 return BadRequest(new { error = "Имя уже занято" });
 
@@ -235,44 +271,60 @@ namespace AncientServer.Controllers
                 LastLogin = DateTime.UtcNow,
                 IsActive = true,
                 Level = 1,
-                Experience = 0,
-                CurrentX = 0,
-                CurrentZ = 0
+                Experience = 0
             };
             if (_players.TryAdd(player.Id, player))
-                return Ok(new { success = true, playerId = player.Id, username = player.Username, message = "Игрок зарегистрирован" });
+                return Ok(new { success = true, playerId = player.Id, username = player.Username, message = "Зарегистрирован" });
             return StatusCode(500, new { error = "Ошибка регистрации" });
         }
 
-        // ========== СПАВН ИГРОКА В ГОРОДЕ ==========
         [HttpPost("spawn")]
         public IActionResult SpawnOnContinent([FromBody] SpawnRequest? request)
         {
-            if (request == null || string.IsNullOrWhiteSpace(request.PlayerId))
+            if (request == null || string.IsNullOrWhiteSpace(request.PlayerId)) 
                 return BadRequest(new { error = "PlayerId обязателен" });
-            if (!_players.TryGetValue(request.PlayerId, out var player))
+            if (!_players.TryGetValue(request.PlayerId, out var player)) 
                 return NotFound(new { error = "Игрок не найден" });
-            if (player.CityId != -1)
+            if (player.CityId != -1) 
                 return BadRequest(new { error = "Игрок уже имеет поселение" });
 
             var continent = _continents.FirstOrDefault(c => c.Id == request.ContinentId);
             if (continent == null) return NotFound(new { error = "Континент не найден" });
-            if (!continent.IsStarter && player.Level < continent.LevelRequirement)
+            if (!continent.IsStarter && player.Level < continent.LevelRequirement) 
                 return BadRequest(new { error = $"Требуется уровень {continent.LevelRequirement}" });
-            if (continent.CurrentPlayers >= continent.MaxPlayers)
+            if (continent.CurrentPlayers >= continent.MaxPlayers) 
                 return BadRequest(new { error = "Континент переполнен" });
 
-            // Поиск города со свободными поместьями (меньше 40)
-            var city = _cities.Values.FirstOrDefault(c => c.ContinentId == continent.Id && c.Settlements.Count < 40);
-            if (city == null)
-                return BadRequest(new { error = "Нет свободных городов на континенте" });
+            // Проверка cityId
+            if (request.CityId <= 0)
+                return BadRequest(new { error = "CityId обязателен" });
+            if (!_cities.TryGetValue(request.CityId, out var city))
+                return BadRequest(new { error = "Город не найден" });
+            if (city.ContinentId != continent.Id)
+                return BadRequest(new { error = "Город не принадлежит выбранному континенту" });
+            if (city.Level != 1)
+                return BadRequest(new { error = "Вы можете заселяться только в город первого уровня (внешний круг)"});
+            if (city.Settlements.Count >= 40)
+                return BadRequest(new { error = "В этом городе нет свободных мест" });
 
-            // Вычисляем локальные координаты нового поместья (равномерно по окружности)
-            int index = city.Settlements.Count;
-            float radius = 0.6f;
-            float angle = index * (2 * MathF.PI / 40);
-            float localX = 0.5f + radius * MathF.Cos(angle);
-            float localZ = 0.5f + radius * MathF.Sin(angle);
+            // Генерация координат нового поместья
+            float localX, localZ;
+            int attempts = 0;
+            bool found = false;
+            do
+            {
+                localX = (float)_rand.NextDouble();
+                localZ = (float)_rand.NextDouble();
+                attempts++;
+                if (attempts > 1000) break;
+                if (IsTooCloseToCenter(localX, localZ, CENTER_RADIUS)) continue;
+                if (IsOverlappingWithAll(localX, localZ, city, MIN_DISTANCE)) continue;
+                found = true;
+                break;
+            } while (true);
+
+            if (!found)
+                return BadRequest(new { error = "Не удалось найти свободное место в городе" });
 
             var settlement = new PlayerSettlement
             {
@@ -283,13 +335,13 @@ namespace AncientServer.Controllers
             };
             city.Settlements.Add(settlement);
 
-            // Сохраняем информацию об игроке
+            // Обновление игрока
             player.CityId = city.Id;
             player.SettlementLocalX = localX;
             player.SettlementLocalZ = localZ;
             player.ContinentId = continent.Id;
 
-            // Мировые координаты спавна (центр города + смещение)
+            // Мировые координаты
             float worldX = city.CenterX + (localX - 0.5f) * 20f;
             float worldZ = city.CenterZ + (localZ - 0.5f) * 20f;
             player.SpawnX = worldX;
@@ -298,12 +350,11 @@ namespace AncientServer.Controllers
             player.CurrentZ = worldZ;
             player.LastLogin = DateTime.UtcNow;
 
-            // Обновляем счётчик континента
+            // Обновление счётчиков континента
             if (player.ContinentId.HasValue)
             {
-                var oldContinent = _continents.FirstOrDefault(c => c.Id == player.ContinentId.Value);
-                if (oldContinent != null && oldContinent.CurrentPlayers > 0)
-                    oldContinent.CurrentPlayers--;
+                var old = _continents.FirstOrDefault(c => c.Id == player.ContinentId.Value);
+                if (old != null && old.CurrentPlayers > 0) old.CurrentPlayers--;
             }
             continent.CurrentPlayers++;
 
@@ -325,30 +376,20 @@ namespace AncientServer.Controllers
             });
         }
 
-        // ========== API ДЛЯ РАБОТЫ С ГОРОДАМИ ==========
         [HttpGet("cities")]
         public IActionResult GetCities(int continentId, float? minX = null, float? maxX = null, float? minZ = null, float? maxZ = null)
         {
             var cities = _cities.Values.Where(c => c.ContinentId == continentId);
             if (minX.HasValue && maxX.HasValue && minZ.HasValue && maxZ.HasValue)
                 cities = cities.Where(c => c.CenterX >= minX && c.CenterX <= maxX && c.CenterZ >= minZ && c.CenterZ <= maxZ);
-            var result = cities.Select(c => new
-            {
-                c.Id,
-                c.Level,
-                c.CenterX,
-                c.CenterZ,
-                SettlementsCount = c.Settlements.Count,
-                c.CastleOwnerGuildId
-            });
+            var result = cities.Select(c => new { c.Id, c.Level, c.CenterX, c.CenterZ, SettlementsCount = c.Settlements.Count, c.CastleOwnerGuildId });
             return Ok(result);
         }
 
         [HttpGet("cities/{cityId}")]
         public IActionResult GetCity(int cityId)
         {
-            if (!_cities.TryGetValue(cityId, out var city))
-                return NotFound("City not found");
+            if (!_cities.TryGetValue(cityId, out var city)) return NotFound("City not found");
             return Ok(new
             {
                 city.Id,
@@ -363,55 +404,35 @@ namespace AncientServer.Controllers
             });
         }
 
-        // ========== СТАТИСТИКА ==========
         [HttpGet("world-stats")]
         public IActionResult GetWorldStats()
         {
             UpdateContinentCounters();
-            var totalPlayers = _players.Count;
-            var playersOnCentral = _players.Values.Count(p => p.ContinentId.HasValue && _continents.Any(c => c.Id == p.ContinentId.Value && c.IsCentral));
             return Ok(new
             {
-                totalPlayers,
-                playersOnCentral,
-                playersOnElemental = totalPlayers - playersOnCentral,
-                continents = _continents.Select(c => new
-                {
-                    c.Id,
-                    c.Name,
-                    c.Element,
-                    players = c.CurrentPlayers,
-                    maxPlayers = c.MaxPlayers,
-                    status = c.CurrentPlayers >= c.MaxPlayers ? "full" : "available"
-                }),
-                timestamp = DateTime.UtcNow
+                totalPlayers = _players.Count,
+                playersOnCentral = _players.Values.Count(p => p.ContinentId.HasValue && _continents.Any(c => c.Id == p.ContinentId.Value && c.IsCentral)),
+                continents = _continents.Select(c => new { c.Id, c.Name, c.Element, players = c.CurrentPlayers, maxPlayers = c.MaxPlayers, status = c.CurrentPlayers >= c.MaxPlayers ? "full" : "available" })
             });
         }
 
-        // ========== ПРОЧИЕ API (world-map, gain-experience, available-continents) ==========
         [HttpGet("world-map")]
         public IActionResult GetWorldMap()
         {
-            var continentPositions = _continents.Select(c => new
+            var continents = _continents.Select(c => new
             {
                 c.Id,
                 c.Name,
                 c.Element,
                 Position = new { c.CenterX, c.CenterZ },
                 Radius = c.IsCentral ? 150 : 100,
-                Color = GetContinentColor(c.Element),
+                Color = c.Element switch { "earth" => "#8B4513", "wind" => "#87CEEB", "fire" => "#FF4500", "water" => "#1E90FF", "void" => "#9370DB", _ => "#808080" },
                 c.IsStarter,
                 c.IsCentral,
                 PlayerCount = c.CurrentPlayers
             });
-            var connections = _continents.Where(c => !c.IsCentral).Select(c => new
-            {
-                From = c.Id,
-                To = 5,
-                Distance = CalculateDistance(c.CenterX, c.CenterZ, 0, 0),
-                Type = "elemental_to_central"
-            });
-            return Ok(new { continents = continentPositions, connections, centerContinentId = 5, timestamp = DateTime.UtcNow });
+            var connections = _continents.Where(c => !c.IsCentral).Select(c => new { From = c.Id, To = 5, Distance = Math.Sqrt(Math.Pow(c.CenterX, 2) + Math.Pow(c.CenterZ, 2)), Type = "elemental_to_central" });
+            return Ok(new { continents, connections, centerContinentId = 5, timestamp = DateTime.UtcNow });
         }
 
         [HttpPost("gain-experience")]
@@ -422,63 +443,37 @@ namespace AncientServer.Controllers
             if (request.Amount <= 0) return BadRequest(new { error = "Опыт должен быть положительным" });
 
             player.Experience += request.Amount;
-            int levelsGained = 0;
-            int expToNext = CalculateExpToNextLevel(player.Level);
+            int levels = 0;
+            int expToNext = 100 + (player.Level - 1) * 50;
             while (player.Experience >= expToNext)
             {
                 player.Experience -= expToNext;
                 player.Level++;
-                levelsGained++;
-                expToNext = CalculateExpToNextLevel(player.Level);
+                levels++;
+                expToNext = 100 + (player.Level - 1) * 50;
             }
             player.LastLogin = DateTime.UtcNow;
-            return Ok(new
-            {
-                success = true,
-                playerId = player.Id,
-                username = player.Username,
-                newLevel = player.Level,
-                levelsGained,
-                currentExperience = player.Experience,
-                experienceToNextLevel = CalculateExpToNextLevel(player.Level),
-                canEnterAtlantis = player.Level >= 10
-            });
+            return Ok(new { success = true, playerId = player.Id, username = player.Username, newLevel = player.Level, levelsGained = levels, currentExperience = player.Experience, experienceToNextLevel = expToNext, canEnterAtlantis = player.Level >= 10 });
         }
 
         [HttpGet("player/{id}/available-continents")]
         public IActionResult GetAvailableContinents(string id)
         {
             if (!_players.TryGetValue(id, out var player)) return NotFound(new { error = "Игрок не найден" });
-            var available = _continents.Where(c => c.IsStarter || player.Level >= c.LevelRequirement)
-                .Select(c => new { c.Id, c.Name, c.Element, Players = $"{c.CurrentPlayers}/{c.MaxPlayers}", CanSpawn = true });
-            var locked = _continents.Where(c => !c.IsStarter && player.Level < c.LevelRequirement)
-                .Select(c => new { c.Id, c.Name, RequiredLevel = c.LevelRequirement, CurrentLevel = player.Level });
+            var available = _continents.Where(c => c.IsStarter || player.Level >= c.LevelRequirement).Select(c => new { c.Id, c.Name, c.Element, Players = $"{c.CurrentPlayers}/{c.MaxPlayers}", CanSpawn = true });
+            var locked = _continents.Where(c => !c.IsStarter && player.Level < c.LevelRequirement).Select(c => new { c.Id, c.Name, RequiredLevel = c.LevelRequirement, CurrentLevel = player.Level });
             return Ok(new { playerId = player.Id, playerLevel = player.Level, available, locked, canAccessAtlantis = player.Level >= 10 });
         }
 
-        // ========== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ==========
         private void UpdateContinentCounters()
         {
-            foreach (var continent in _continents) continent.CurrentPlayers = 0;
-            foreach (var player in _players.Values)
-                if (player.ContinentId.HasValue)
+            foreach (var c in _continents) c.CurrentPlayers = 0;
+            foreach (var p in _players.Values)
+                if (p.ContinentId.HasValue)
                 {
-                    var continent = _continents.FirstOrDefault(c => c.Id == player.ContinentId.Value);
-                    if (continent != null) continent.CurrentPlayers++;
+                    var cont = _continents.FirstOrDefault(c => c.Id == p.ContinentId.Value);
+                    if (cont != null) cont.CurrentPlayers++;
                 }
         }
-
-        private static string GetContinentColor(string element) => element switch
-        {
-            "earth" => "#8B4513",
-            "wind" => "#87CEEB",
-            "fire" => "#FF4500",
-            "water" => "#1E90FF",
-            "void" => "#9370DB",
-            _ => "#808080"
-        };
-
-        private static double CalculateDistance(float x1, float z1, float x2, float z2) => Math.Sqrt(Math.Pow(x2 - x1, 2) + Math.Pow(z2 - z1, 2));
-        private static int CalculateExpToNextLevel(int level) => 100 + (level - 1) * 50;
     }
 }
