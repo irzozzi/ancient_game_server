@@ -45,6 +45,12 @@ namespace AncientServer.Models
         public float LocalZ { get; set; }
         public bool IsAlive { get; set; } = true;
         public DateTime? RespawnTime { get; set; }
+        public int Health { get; set; } = 50;
+        public int MaxHealth { get; set; } = 50;
+        public int AttackPower { get; set; } = 10;
+        public int RewardExp { get; set; } = 50;
+        public int RewardMinPlatinum { get; set; } = 10; 
+        public int RewardMaxPlatinum { get; set; } = 50; 
     }
 
     public class Dungeon

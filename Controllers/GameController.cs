@@ -65,13 +65,13 @@ namespace AncientServer.Controllers
                         Level = ring.Level,
                         CenterX = x,
                         CenterZ = z,
-                        Settlements = new List<PlayerSettlement>(), // пустой список – поместья будут добавляться при спавне
+                        Settlements = new List<PlayerSettlement>(),
                         Mines = new List<Mine>(),
                         MobCamps = new List<MobCamp>(),
                         Dungeons = new List<Dungeon>()
                     };
 
-                    // 10 шахт (с проверкой наложения только между собой, так как поместий ещё нет)
+                    // 10 шахт
                     for (int m = 0; m < 10; m++)
                     {
                         float localX, localZ;
@@ -95,7 +95,7 @@ namespace AncientServer.Controllers
                         });
                     }
 
-                    // 20 мобов (с проверкой наложения на шахты)
+                    // 20 мобов
                     for (int m = 0; m < 20; m++)
                     {
                         float localX, localZ;
@@ -110,17 +110,24 @@ namespace AncientServer.Controllers
                                  IsOverlappingWithMines(localX, localZ, city.Mines, MIN_DISTANCE) ||
                                  IsOverlappingWithMobs(localX, localZ, city.MobCamps, MIN_DISTANCE));
                         
+                        int health = 50 + ring.Level * 10;
                         city.MobCamps.Add(new MobCamp
                         {
                             MobType = _rand.Next(3) switch { 0 => "goblin", 1 => "wolf", _ => "skeleton" },
                             Level = _rand.Next(1, city.Level + 2),
                             LocalX = localX,
                             LocalZ = localZ,
-                            IsAlive = true
+                            IsAlive = true,
+                            Health = health,
+                            MaxHealth = health,
+                            AttackPower = 10 + city.Level * 2,
+                            RewardExp = 50 + city.Level * 10,
+                            RewardMinPlatinum = 10,
+                            RewardMaxPlatinum = 50
                         });
                     }
 
-                    // 3 подземелья (с проверкой наложения на шахты и мобов)
+                    // 3 подземелья
                     for (int m = 0; m < 3; m++)
                     {
                         float localX, localZ;
@@ -198,6 +205,32 @@ namespace AncientServer.Controllers
                    IsOverlappingWithSettlements(x, z, city.Settlements, minDist);
         }
 
+        // ========== РЕСПАВН ШАХТЫ ==========
+        private static void RespawnMine(City city, Mine oldMine)
+        {
+            city.Mines.Remove(oldMine);
+            float newX, newZ;
+            int attempts = 0;
+            do
+            {
+                newX = (float)_rand.NextDouble();
+                newZ = (float)_rand.NextDouble();
+                attempts++;
+                if (attempts > 500) break;
+            } while (IsTooCloseToCenter(newX, newZ, CENTER_RADIUS) ||
+                     IsOverlappingWithAll(newX, newZ, city, MIN_DISTANCE));
+
+            city.Mines.Add(new Mine
+            {
+                Id = Guid.NewGuid().ToString(),
+                Type = oldMine.Type,
+                LocalX = newX,
+                LocalZ = newZ,
+                Amount = oldMine.MaxAmount,
+                MaxAmount = oldMine.MaxAmount
+            });
+        }
+
         // ========== API МЕТОДЫ ==========
         [HttpGet("ping")]
         public IActionResult Ping() => Ok(new { message = "pong", serverTime = DateTime.UtcNow });
@@ -230,7 +263,7 @@ namespace AncientServer.Controllers
             var list = _players.Values.Select(p =>
             {
                 var continent = p.ContinentId.HasValue ? _continents.FirstOrDefault(c => c.Id == p.ContinentId) : null;
-                return new { p.Id, p.Username, p.Level, Continent = continent?.Name ?? "Не выбран", SpawnPosition = p.ContinentId.HasValue ? new { p.SpawnX, p.SpawnZ } : null, p.CreatedAt };
+                return new { p.Id, p.Username, p.Level, p.Platinum, p.SpiritEnergy, Continent = continent?.Name ?? "Не выбран", SpawnPosition = p.ContinentId.HasValue ? new { p.SpawnX, p.SpawnZ } : null, p.CreatedAt };
             });
             return Ok(list);
         }
@@ -246,6 +279,8 @@ namespace AncientServer.Controllers
                 player.Username,
                 player.Level,
                 player.Experience,
+                player.Platinum,
+                player.SpiritEnergy,
                 Continent = continent?.Name ?? "Не выбран",
                 Element = continent?.Element,
                 SpawnPosition = player.ContinentId.HasValue ? new { player.SpawnX, player.SpawnZ } : null,
@@ -271,7 +306,9 @@ namespace AncientServer.Controllers
                 LastLogin = DateTime.UtcNow,
                 IsActive = true,
                 Level = 1,
-                Experience = 0
+                Experience = 0,
+                Platinum = 0,
+                SpiritEnergy = 0
             };
             if (_players.TryAdd(player.Id, player))
                 return Ok(new { success = true, playerId = player.Id, username = player.Username, message = "Зарегистрирован" });
@@ -295,7 +332,6 @@ namespace AncientServer.Controllers
             if (continent.CurrentPlayers >= continent.MaxPlayers) 
                 return BadRequest(new { error = "Континент переполнен" });
 
-            // Проверка cityId
             if (request.CityId <= 0)
                 return BadRequest(new { error = "CityId обязателен" });
             if (!_cities.TryGetValue(request.CityId, out var city))
@@ -307,7 +343,6 @@ namespace AncientServer.Controllers
             if (city.Settlements.Count >= 40)
                 return BadRequest(new { error = "В этом городе нет свободных мест" });
 
-            // Генерация координат нового поместья
             float localX, localZ;
             int attempts = 0;
             bool found = false;
@@ -335,13 +370,11 @@ namespace AncientServer.Controllers
             };
             city.Settlements.Add(settlement);
 
-            // Обновление игрока
             player.CityId = city.Id;
             player.SettlementLocalX = localX;
             player.SettlementLocalZ = localZ;
             player.ContinentId = continent.Id;
 
-            // Мировые координаты
             float worldX = city.CenterX + (localX - 0.5f) * 20f;
             float worldZ = city.CenterZ + (localZ - 0.5f) * 20f;
             player.SpawnX = worldX;
@@ -350,7 +383,6 @@ namespace AncientServer.Controllers
             player.CurrentZ = worldZ;
             player.LastLogin = DateTime.UtcNow;
 
-            // Обновление счётчиков континента
             if (player.ContinentId.HasValue)
             {
                 var old = _continents.FirstOrDefault(c => c.Id == player.ContinentId.Value);
@@ -367,12 +399,63 @@ namespace AncientServer.Controllers
                     player.Id,
                     player.Username,
                     player.Level,
+                    player.Platinum,
+                    player.SpiritEnergy,
                     Continent = continent.Name,
                     CityId = city.Id,
                     CityLevel = city.Level,
                     SettlementLocal = new { localX, localZ },
                     SpawnPosition = new { worldX, worldZ }
                 }
+            });
+        }
+
+        // ========== API ДЛЯ СБОРА РЕСУРСОВ ==========
+        [HttpPost("mines/{mineId}/gather")]
+        public IActionResult GatherMine(string mineId, [FromBody] GatherMineRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.PlayerId))
+                return BadRequest(new { error = "PlayerId обязателен" });
+            if (!_players.TryGetValue(request.PlayerId, out var player))
+                return NotFound(new { error = "Игрок не найден" });
+
+            var city = _cities.Values.FirstOrDefault(c => c.Mines.Any(m => m.Id == mineId));
+            if (city == null)
+                return NotFound(new { error = "Шахта не найдена" });
+            if (player.CityId != city.Id)
+                return BadRequest(new { error = "Вы находитесь не в том городе" });
+
+            var mine = city.Mines.First(m => m.Id == mineId);
+            if (mine.Amount <= 0)
+                return BadRequest(new { error = "Шахта истощена" });
+
+            int gathered = Math.Min(request.Amount ?? 100, mine.Amount);
+            
+            var continent = _continents.First(c => c.Id == player.ContinentId);
+            if (continent.BonusType == "defense" && mine.Type == "platinum")
+                gathered = (int)(gathered * 1.1f);
+            else if (continent.BonusType == "speed" && mine.Type == "spirit")
+                gathered = (int)(gathered * 1.1f);
+
+            mine.Amount -= gathered;
+
+            if (mine.Type == "platinum")
+                player.Platinum += gathered;
+            else
+                player.SpiritEnergy += gathered;
+
+            if (mine.Amount <= 0)
+            {
+                RespawnMine(city, mine);
+            }
+
+            return Ok(new
+            {
+                success = true,
+                gathered = gathered,
+                resourceType = mine.Type,
+                remaining = mine.Amount,
+                playerResources = new { player.Platinum, player.SpiritEnergy }
             });
         }
 
@@ -390,6 +473,18 @@ namespace AncientServer.Controllers
         public IActionResult GetCity(int cityId)
         {
             if (!_cities.TryGetValue(cityId, out var city)) return NotFound("City not found");
+            
+            // Проверка респавна мобов
+            foreach (var mob in city.MobCamps)
+            {
+                if (!mob.IsAlive && mob.RespawnTime.HasValue && DateTime.UtcNow >= mob.RespawnTime.Value)
+                {
+                    mob.IsAlive = true;
+                    mob.Health = mob.MaxHealth;
+                    mob.RespawnTime = null;
+                }
+            }
+            
             return Ok(new
             {
                 city.Id,
@@ -399,7 +494,7 @@ namespace AncientServer.Controllers
                 city.CastleOwnerGuildId,
                 Settlements = city.Settlements.Select(s => new { s.PlayerId, s.LocalX, s.LocalZ, s.Level }),
                 Mines = city.Mines.Select(m => new { m.Id, m.Type, m.LocalX, m.LocalZ, m.Amount, m.MaxAmount }),
-                MobCamps = city.MobCamps.Select(m => new { m.Id, m.MobType, m.Level, m.LocalX, m.LocalZ, m.IsAlive }),
+                MobCamps = city.MobCamps.Select(m => new { m.Id, m.MobType, m.Level, m.LocalX, m.LocalZ, m.IsAlive, m.Health, m.MaxHealth, m.RespawnTime }),
                 Dungeons = city.Dungeons.Select(d => new { d.Id, d.DungeonType, d.LocalX, d.LocalZ, d.IsAvailable })
             });
         }
@@ -463,6 +558,92 @@ namespace AncientServer.Controllers
             var available = _continents.Where(c => c.IsStarter || player.Level >= c.LevelRequirement).Select(c => new { c.Id, c.Name, c.Element, Players = $"{c.CurrentPlayers}/{c.MaxPlayers}", CanSpawn = true });
             var locked = _continents.Where(c => !c.IsStarter && player.Level < c.LevelRequirement).Select(c => new { c.Id, c.Name, RequiredLevel = c.LevelRequirement, CurrentLevel = player.Level });
             return Ok(new { playerId = player.Id, playerLevel = player.Level, available, locked, canAccessAtlantis = player.Level >= 10 });
+        }
+
+        // ========== API ДЛЯ АТАКИ МОБА ==========
+        [HttpPost("mobs/{mobId}/attack")]
+        public IActionResult AttackMob(string mobId, [FromBody] AttackMobRequest request)
+        {
+            // 1. Проверить игрока
+            if (!_players.TryGetValue(request.PlayerId, out var player))
+                return NotFound(new { error = "Игрок не найден" });
+
+            // 2. Найти город, в котором находится моб
+            var city = _cities.Values.FirstOrDefault(c => c.MobCamps.Any(m => m.Id == mobId));
+            if (city == null)
+                return NotFound(new { error = "Моб не найден" });
+            
+            // 3. Проверить, что игрок находится в этом городе
+            if (player.CityId != city.Id)
+                return BadRequest(new { error = "Вы находитесь не в том городе" });
+            
+            // 4. Найти моба
+            var mob = city.MobCamps.First(m => m.Id == mobId);
+            
+            // 5. Проверить, что моб жив
+            if (!mob.IsAlive)
+                return BadRequest(new { error = "Моб уже повержен. Ожидайте респавна." });
+            
+            // 6. Рассчитать урон
+            int damage = player.Level * 10;
+            mob.Health -= damage;
+            
+            // 7. Проверить, убит ли моб
+            bool isKilled = mob.Health <= 0;
+
+            if (isKilled)
+            {
+                // Начисление опыта
+                int expReward = mob.RewardExp;
+                player.Experience += expReward;
+
+                // Проверка повышения уровня
+                int levelsGained = 0;
+                int expToNext = 100 + (player.Level - 1) * 50;
+                while (player.Experience >= expToNext)
+                {
+                    player.Experience -= expToNext;
+                    player.Level++;
+                    levelsGained++;
+                    expToNext = 100 + (player.Level - 1) * 50;
+                }
+
+                // Начисление ресурсов
+                int platinumReward = _rand.Next(mob.RewardMinPlatinum, mob.RewardMaxPlatinum + 1);
+                player.Platinum += platinumReward;
+
+                // Пометить моба мёртвым
+                mob.IsAlive = false;
+                mob.Health = 0;
+                mob.RespawnTime = DateTime.UtcNow.AddMinutes(1);
+
+                return Ok(new
+                {
+                    success = true,
+                    message = "Моб побеждён!",
+                    damage = damage,
+                    isKilled = true,
+                    reward = new
+                    {
+                        exp = expReward,
+                        platinum = platinumReward,
+                        newLevel = player.Level,
+                        levelsGained = levelsGained
+                    },
+                    respawnAt = mob.RespawnTime
+                });
+            }
+            else
+            {
+                return Ok(new
+                {
+                    success = true,
+                    message = $"Моб получил {damage} урона. Осталось здоровья: {mob.Health}",
+                    damage = damage,
+                    isKilled = false,
+                    remainingHealth = mob.Health
+                });
+            }
         }
 
         private void UpdateContinentCounters()
