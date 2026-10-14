@@ -1,0 +1,45 @@
+# .NET / C# — build artifacts
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+*.csproj.user
+*.sln.docstates
+
+# Rider
+.idea/
+*.sln.iml
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+._*
+
+# DataProtection keys (не коммитить!)
+DataProtectionKeys/
+
+# Данные БД (если будут локальные дампы)
+*.db
+*.sqlite
+*.sqlite3
+
+# Логи
+*.log
+logs/
+
+# NuGet
+*.nupkg
+packages/
+!packages/build/
+
+# Прочее
+*.tmp
+*.bak
+*.swp
+
+# Excel-файлы с чувствительными данными (если нужно)
+# Раскомментируй, если хочешь игнорировать
+# Data/*.xlsx
